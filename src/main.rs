@@ -1,5 +1,6 @@
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::io::prelude::*;
+use std::io::{Error, ErrorKind};
 use std::thread;
 use std::collections::HashMap;
 use std::time::SystemTime;
@@ -8,11 +9,14 @@ use chrono::DateTime;
 use chrono::offset::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use rand::{thread_rng, Rng};
+use rand::distributions::Alphanumeric;
 
 #[derive(Serialize, Deserialize)]
 enum MessageType {
-    Token,
-    LoginDetails,
+    SendToken,
+    RequestToken,
+    Username,
     LoginRequest,
     Result(Result)
 }
@@ -34,10 +38,22 @@ impl Message {
     // On the server side we will only ever have to retrieve the client token
     fn get_body_value(&self, key: &str) -> String {
         self.body
+            .as_ref()
             .unwrap()
             .get(key)
             .expect("Unable to find key")
             .to_string()
+    }
+
+    fn send(&self, stream: &mut TcpStream) -> std::io::Result<()> {
+        // write to the message to TCP stream
+        // we exit the function if this fails
+        let serialized: String = match serde_json::to_string(self) {
+            Ok(s) => s,
+            Err(_) => return Err(Error::new(ErrorKind::Other, "Unable to send"))
+        };
+
+        stream.write_all(serialized.as_bytes())
     }
 }
 
@@ -51,9 +67,15 @@ impl Message {
 struct LoginData {
     client_token: String,
     server_token: String,
-    username: String,
-    client_secret: String,
-    server_secret: String
+    username: String
+}
+
+fn gen_token() -> String {
+    return thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(30)
+        .map(char::from)
+        .collect();
 }
 
 fn get_timestamp() -> String {
@@ -76,20 +98,15 @@ fn handle_client(mut stream: TcpStream) {
         body: None
     };
 
-    // write to the message to TCP stream
-    // we exit the function if this fails
-    let serialized: String = match serde_json::to_string(&msg_connected) {
-        Ok(s) => s,
-        Err(_) => return
-    };
-    stream.write_all(serialized.as_bytes()).expect("Unable to write to stream");
+    msg_connected.send(&mut stream);
+    // append the length of
+
+
 
     let mut login_data = LoginData {
         username: String::new(),
         client_token: String::new(),
-        server_token: String::new(),
-        client_secret: String::new(),
-        server_secret: String::new()
+        server_token: gen_token()
     };
 
     loop {
@@ -100,15 +117,17 @@ fn handle_client(mut stream: TcpStream) {
         // parse message to json
         let msg: Message = serde_json::from_str(&msg).expect("Unable to parse JSON");
 
-
-
         match msg.msg_type {
-            MessageType::Token => login_data.client_token = msg.get_body_value("client_token"),
-            MessageType::LoginDetails => {
-                login_data.username = msg.get_body_value("username");
-                login_data.client_secret = msg.get_body_value("password")
-            },
+            MessageType::SendToken => 
+                login_data.client_token = msg.get_body_value("client_token"),
+            MessageType::RequestToken =>
+                stream.write_all(login_data.server_token.as_bytes()).expect("Unable to send token"),
+            MessageType::Username => 
+                login_data.username = msg.get_body_value("username"),
             MessageType::LoginRequest => 
+                panic!("Not Yet Implemented"),
+            MessageType::Result(r) => 
+                panic!("Not Yet Implemented")
         };
     }
 
