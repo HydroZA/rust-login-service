@@ -8,7 +8,7 @@ use maplit::hashmap;
 use chrono::DateTime;
 use chrono::offset::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+//use serde_json::json;
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 
@@ -50,7 +50,8 @@ impl Message {
         // we exit the function if this fails
         let serialized: String = match serde_json::to_string(self) {
             Ok(s) => s,
-            Err(_) => return Err(Error::new(ErrorKind::Other, "Unable to send"))
+            Err(e) => 
+                return Err(Error::new(ErrorKind::Other, e))
         };
 
         stream.write_all(serialized.as_bytes())
@@ -73,7 +74,7 @@ struct LoginData {
 fn gen_token() -> String {
     return thread_rng()
         .sample_iter(&Alphanumeric)
-        .take(30)
+        .take(7)
         .map(char::from)
         .collect();
 }
@@ -98,10 +99,7 @@ fn handle_client(mut stream: TcpStream) {
         body: None
     };
 
-    msg_connected.send(&mut stream);
-    // append the length of
-
-
+    msg_connected.send(&mut stream).expect("Unable to send message");
 
     let mut login_data = LoginData {
         username: String::new(),
@@ -119,14 +117,23 @@ fn handle_client(mut stream: TcpStream) {
 
         match msg.msg_type {
             MessageType::SendToken => 
-                login_data.client_token = msg.get_body_value("client_token"),
-            MessageType::RequestToken =>
-                stream.write_all(login_data.server_token.as_bytes()).expect("Unable to send token"),
+                login_data.client_token = msg.get_body_value("token"),
+            MessageType::RequestToken => {
+                    Message {
+                        header: hashmap! {
+                        "timestamp" => get_timestamp()
+                        },
+                        msg_type: MessageType::SendToken,
+                        body: hashmap! {
+                            "token" => login_data.server_token
+                        }
+                    }.send(&mut stream)
+                },
             MessageType::Username => 
                 login_data.username = msg.get_body_value("username"),
             MessageType::LoginRequest => 
                 panic!("Not Yet Implemented"),
-            MessageType::Result(r) => 
+            MessageType::Result(_r) => 
                 panic!("Not Yet Implemented")
         };
     }
@@ -140,6 +147,8 @@ fn handle_client(mut stream: TcpStream) {
 
 fn main() {
     let listener = TcpListener::bind("0.0.0.0:6969").unwrap();
+
+    println!("Listening!");
 
     for stream in listener.incoming() {
         match stream {
