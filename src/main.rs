@@ -2,6 +2,7 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::io::prelude::*;
 use std::io::{Error, ErrorKind};
 use std::thread;
+use std::str;
 use std::collections::HashMap;
 use std::time::SystemTime;
 use maplit::hashmap;
@@ -12,17 +13,30 @@ use serde::{Deserialize, Serialize};
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 
+/*
+    Client connects to server and send a random token (T1)
+    Server sends a random token (T2)
+    Client send M = sha( T1 + T2 + < password: client's copy > ) to the server
+    The server checks if sha( T1 + T2 + < password: server's copy > ) matches M (the hash just received).
+*/
+
+struct LoginData {
+    client_token: String,
+    server_token: String,
+    username: String
+}
+
 #[derive(Serialize, Deserialize)]
 enum MessageType {
     SendToken,
     RequestToken,
     Username,
     LoginRequest,
-    Result(Result)
+    OperationResult(OperationResult)
 }
 
 #[derive(Serialize, Deserialize)]
-enum Result {
+enum OperationResult {
     Success,
     Fail
 }
@@ -32,6 +46,30 @@ struct Message {
     header: HashMap<String, String>,
     msg_type: MessageType,
     body: Option<HashMap<String, String>>
+}
+
+fn read_message (stream: &mut TcpStream) -> Result<Message, serde_json::Error> {
+    // Read 1 byte representing message length
+    let mut len_buf = vec![0u8; 1];
+    stream.read_exact(&mut len_buf).expect("Unable to read message length");
+
+    // Convert the received ut8 char to an ascii character
+    let len = len_buf[0] as char;
+    let len: usize = len.to_digit(10).unwrap() as usize;
+
+    // Read the specified amount of bytes from the stream
+    let mut msg_buf = vec![0u8; len];
+    stream.read_exact(&mut msg_buf).expect("Unable to read message");
+    
+    // Convert the received bytes into a string
+    let msg = match str::from_utf8(&msg_buf[..]) {
+        Ok(msg) => msg,
+        Err(_) => panic! ("Unable to convert message to string")
+    };
+
+    stream.flush().expect("Unable to flush stream");
+
+    serde_json::from_str(&msg)
 }
 
 impl Message {
@@ -48,27 +86,22 @@ impl Message {
     fn send(&self, stream: &mut TcpStream) -> std::io::Result<()> {
         // write to the message to TCP stream
         // we exit the function if this fails
-        let serialized: String = match serde_json::to_string(self) {
+        let json = match serde_json::to_string(self) {
             Ok(s) => s,
             Err(e) => 
                 return Err(Error::new(ErrorKind::Other, e))
         };
 
-        stream.write_all(serialized.as_bytes())
+        // Convert the serialized json into bytes
+        let serialized = json.as_bytes();
+
+        // Write the length of the message first so the recipient knows how many bytes to listen for
+        let len = serialized.len().to_string();
+        let len = len.as_bytes();
+        stream.write(len).expect("Unable to write message length");
+
+        stream.write_all(serialized)
     }
-}
-
-/*
-    Client connects to server and send a random token (T1)
-    Server sends a random token (T2)
-    Client send M = sha( T1 + T2 + < password: client's copy > ) to the server
-    The server checks if sha( T1 + T2 + < password: server's copy > ) matches M (the hash just received).
-*/
-
-struct LoginData {
-    client_token: String,
-    server_token: String,
-    username: String
 }
 
 fn gen_token() -> String {
@@ -95,7 +128,7 @@ fn handle_client(mut stream: TcpStream) {
         header: hashmap!{
             String::from("timestamp") => get_timestamp()
         },
-        msg_type: MessageType::Result(Result::Success),
+        msg_type: MessageType::OperationResult(OperationResult::Success),
         body: None
     };
 
@@ -108,12 +141,8 @@ fn handle_client(mut stream: TcpStream) {
     };
 
     loop {
-        let mut msg: String = String::new();
-
-        stream.read_to_string(&mut msg).expect("Unable to read message");
-
-        // parse message to json
-        let msg: Message = serde_json::from_str(&msg).expect("Unable to parse JSON");
+        let msg: Message = read_message(&mut stream)
+            .expect("Unable to read message");
 
         match msg.msg_type {
             MessageType::SendToken => 
@@ -121,19 +150,19 @@ fn handle_client(mut stream: TcpStream) {
             MessageType::RequestToken => {
                     Message {
                         header: hashmap! {
-                        "timestamp" => get_timestamp()
+                            String::from("timestamp") => get_timestamp()
                         },
                         msg_type: MessageType::SendToken,
-                        body: hashmap! {
-                            "token" => login_data.server_token
-                        }
-                    }.send(&mut stream)
+                        body: Some(hashmap! {
+                            String::from("token") => login_data.server_token.clone()
+                        })
+                    }.send(&mut stream).expect("Unable to send token")
                 },
             MessageType::Username => 
                 login_data.username = msg.get_body_value("username"),
             MessageType::LoginRequest => 
                 panic!("Not Yet Implemented"),
-            MessageType::Result(_r) => 
+            MessageType::OperationResult(_r) => 
                 panic!("Not Yet Implemented")
         };
     }
