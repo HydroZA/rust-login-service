@@ -12,17 +12,12 @@ use serde::{Deserialize, Serialize};
 //use serde_json::json;
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
-
-/*
-    Client connects to server and send a random token (T1)
-    Server sends a random token (T2)
-    Client send M = sha( T1 + T2 + < password: client's copy > ) to the server
-    The server checks if sha( T1 + T2 + < password: server's copy > ) matches M (the hash just received).
-*/
+use sha256::digest;
 
 struct LoginData {
     client_token: String,
     server_token: String,
+    client_hash: String,
     username: String
 }
 
@@ -32,7 +27,7 @@ enum MessageType {
     RequestToken,
     Username,
     LoginRequest,
-    OperationResult(OperationResult)
+    Result(OperationResult)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -48,12 +43,12 @@ struct Message {
     body: Option<HashMap<String, String>>
 }
 
-fn read_message (stream: &mut TcpStream) -> Result<Message, serde_json::Error> {
+fn read_message(stream: &mut TcpStream) -> Result<Message, serde_json::Error> {
     // Read 1 byte representing message length
     let mut len_buf = vec![0u8; 1];
     stream.read_exact(&mut len_buf).expect("Unable to read message length");
 
-    // Convert the received ut8 char to an ascii character
+    // Convert the received byte to a usize
     let len = len_buf[0] as char;
     let len: usize = len.to_digit(10).unwrap() as usize;
 
@@ -67,8 +62,10 @@ fn read_message (stream: &mut TcpStream) -> Result<Message, serde_json::Error> {
         Err(_) => panic! ("Unable to convert message to string")
     };
 
+    // Flush the stream
     stream.flush().expect("Unable to flush stream");
 
+    // Parse the Json string into a Message object
     serde_json::from_str(&msg)
 }
 
@@ -116,9 +113,43 @@ fn get_timestamp() -> String {
     // Get time for timestamp field
     let sys_time = SystemTime::now();
     let utc_time: DateTime<Utc> = sys_time.into();
-    let timestamp = format!("{}", utc_time.format("%d/%m/%Y %T"));
+    return format!("{}", utc_time.format("%d/%m/%Y %T"));
+}
 
-    timestamp
+fn get_server_secret(username: String) -> &str {
+
+}
+
+/*
+    Client connects to server and send a random token (T1)
+    Server sends a random token (T2)
+    Client send M = sha( T1 + T2 + < password: client's copy > ) to the server
+    The server checks if sha( T1 + T2 + < password: server's copy > ) matches M (the hash just received).
+*/
+
+fn process_login_request(data: LoginData) -> MessageType {
+    if data.username.is_empty() {
+        return MessageType::Result(OperationResult::Fail);
+    }
+    if data.client_token.is_empty() {
+        return MessageType::Result(OperationResult::Fail);
+    }
+    if data.client_hash.is_empty() {
+        return MessageType::Result(OperationResult::Fail);
+    }
+
+    let server_hash = format!("{}{}{}", 
+        data.client_token, 
+        data.server_token, 
+        get_server_secret(data.username)
+    );
+    let server_hash: String = digest(server_hash);
+    if server_hash == data.client_hash {
+        return MessageType::Result(OperationResult::Success);
+    }
+    else {
+        return MessageType::Result(OperationResult::Fail);
+    }
 }
 
 #[allow(unreachable_code)]
@@ -128,7 +159,7 @@ fn handle_client(mut stream: TcpStream) {
         header: hashmap!{
             String::from("timestamp") => get_timestamp()
         },
-        msg_type: MessageType::OperationResult(OperationResult::Success),
+        msg_type: MessageType::Result(OperationResult::Success),
         body: None
     };
 
@@ -137,7 +168,8 @@ fn handle_client(mut stream: TcpStream) {
     let mut login_data = LoginData {
         username: String::new(),
         client_token: String::new(),
-        server_token: gen_token()
+        server_token: gen_token(),
+        client_hash: String::new()
     };
 
     loop {
@@ -148,31 +180,36 @@ fn handle_client(mut stream: TcpStream) {
             MessageType::SendToken => 
                 login_data.client_token = msg.get_body_value("token"),
             MessageType::RequestToken => {
-                    Message {
-                        header: hashmap! {
-                            String::from("timestamp") => get_timestamp()
-                        },
-                        msg_type: MessageType::SendToken,
-                        body: Some(hashmap! {
-                            String::from("token") => login_data.server_token.clone()
-                        })
-                    }.send(&mut stream).expect("Unable to send token")
-                },
+                Message {
+                    header: hashmap! {
+                        String::from("timestamp") => get_timestamp()
+                    },
+                    msg_type: MessageType::SendToken,
+                    body: Some(hashmap! {
+                        String::from("token") => login_data.server_token.clone()
+                    })
+                }.send(&mut stream).expect("Unable to send token")
+            },
             MessageType::Username => 
                 login_data.username = msg.get_body_value("username"),
-            MessageType::LoginRequest => 
-                panic!("Not Yet Implemented"),
-            MessageType::OperationResult(_r) => 
+            MessageType::LoginRequest => {
+                login_data.client_hash = msg.get_body_value("client_hash");
+
+                Message {
+                    header: hashmap! {
+                        String::from("timestamp") => get_timestamp()
+                    },
+                    msg_type: process_login_request(login_data),
+                    body: None
+                }.send(&mut stream).expect("Unable to send login result")
+            },
+            MessageType::Result(_r) => 
                 panic!("Not Yet Implemented")
         };
     }
-
    
     let _ = stream.shutdown(Shutdown::Both);
 }
-
-
-
 
 fn main() {
     let listener = TcpListener::bind("0.0.0.0:6969").unwrap();
