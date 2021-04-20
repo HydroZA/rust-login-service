@@ -9,10 +9,12 @@ use maplit::hashmap;
 use chrono::DateTime;
 use chrono::offset::Utc;
 use serde::{Deserialize, Serialize};
-//use serde_json::json;
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use sha256::digest;
+use mysql::*;
+use mysql::prelude::*;
+//use serde_json::json;
 
 struct LoginData {
     client_token: String,
@@ -43,7 +45,7 @@ struct Message {
     body: Option<HashMap<String, String>>
 }
 
-fn read_message(stream: &mut TcpStream) -> Result<Message, serde_json::Error> {
+fn read_message(stream: &mut TcpStream) -> std::result::Result<Message, serde_json::Error> {
     // Read 1 byte representing message length
     let mut len_buf = vec![0u8; 1];
     stream.read_exact(&mut len_buf).expect("Unable to read message length");
@@ -116,8 +118,23 @@ fn get_timestamp() -> String {
     return format!("{}", utc_time.format("%d/%m/%Y %T"));
 }
 
-fn get_server_secret(username: String) -> &str {
+fn get_server_secret(username: &str) -> String {
+    let db_url = "mysql://rust:12345@server:3306/rust_login_service";
 
+    let pool = Pool::new(db_url).unwrap();
+
+    let mut conn = pool.get_conn().unwrap();
+
+    let query: String = format!("
+        SELECT Password 
+        FROM users
+        WHERE Username = \"{}\";", username
+    );
+
+    return match conn.query_first(query).unwrap() {
+        Some(pw) => pw,
+        None => panic!("User not found")
+    };
 }
 
 /*
@@ -127,21 +144,17 @@ fn get_server_secret(username: String) -> &str {
     The server checks if sha( T1 + T2 + < password: server's copy > ) matches M (the hash just received).
 */
 
-fn process_login_request(data: LoginData) -> MessageType {
-    if data.username.is_empty() {
-        return MessageType::Result(OperationResult::Fail);
-    }
-    if data.client_token.is_empty() {
-        return MessageType::Result(OperationResult::Fail);
-    }
-    if data.client_hash.is_empty() {
+fn process_login_request(data: &LoginData) -> MessageType {
+    if data.username.is_empty() ||
+        data.client_token.is_empty() ||
+        data.client_hash.is_empty() {
         return MessageType::Result(OperationResult::Fail);
     }
 
     let server_hash = format!("{}{}{}", 
         data.client_token, 
         data.server_token, 
-        get_server_secret(data.username)
+        get_server_secret(&data.username)
     );
     let server_hash: String = digest(server_hash);
     if server_hash == data.client_hash {
@@ -199,7 +212,7 @@ fn handle_client(mut stream: TcpStream) {
                     header: hashmap! {
                         String::from("timestamp") => get_timestamp()
                     },
-                    msg_type: process_login_request(login_data),
+                    msg_type: process_login_request(&login_data),
                     body: None
                 }.send(&mut stream).expect("Unable to send login result")
             },
