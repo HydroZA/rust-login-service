@@ -47,12 +47,15 @@ struct Message {
 
 fn read_message(stream: &mut TcpStream) -> std::result::Result<Message, serde_json::Error> {
     // Read 1 byte representing message length
-    let mut len_buf = vec![0u8; 1];
+    let mut len_buf = vec![0u8; 2];
     stream.read_exact(&mut len_buf).expect("Unable to read message length");
 
     // Convert the received byte to a usize
-    let len = len_buf[0] as char;
-    let len: usize = len.to_digit(10).unwrap() as usize;
+    let len: usize = str::from_utf8(&len_buf[..])
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
 
     // Read the specified amount of bytes from the stream
     let mut msg_buf = vec![0u8; len];
@@ -66,6 +69,8 @@ fn read_message(stream: &mut TcpStream) -> std::result::Result<Message, serde_js
 
     // Flush the stream
     stream.flush().expect("Unable to flush stream");
+
+    println!("{}", &len);
 
     // Parse the Json string into a Message object
     serde_json::from_str(&msg)
