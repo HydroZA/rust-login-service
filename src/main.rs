@@ -16,6 +16,7 @@ use mysql::*;
 use mysql::prelude::*;
 //use serde_json::json;
 
+#[derive(Serialize, Deserialize, Debug)]
 struct LoginData {
     client_token: String,
     server_token: String,
@@ -23,7 +24,7 @@ struct LoginData {
     username: String
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 enum MessageType {
     SendToken,
     RequestToken,
@@ -32,35 +33,54 @@ enum MessageType {
     Result(OperationResult)
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 enum OperationResult {
     Success,
     Fail
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct Message {
     header: HashMap<String, String>,
     msg_type: MessageType,
     body: Option<HashMap<String, String>>
 }
 
+fn remove_leading_zeroes(s: &str) -> &str {
+    let mut out = "";
+    for (i, c) in s.chars().enumerate() {
+        if c == '0' {
+            out = &s[i..];
+        }
+        else {
+            break;
+        }
+    }
+    out
+}
+
 fn read_message(stream: &mut TcpStream) -> std::result::Result<Message, serde_json::Error> {
     // Read 1 byte representing message length
-    let mut len_buf = vec![0u8; 2];
+    let mut len_buf = vec![0u8; 4];
     stream.read_exact(&mut len_buf).expect("Unable to read message length");
 
     // Convert the received byte to a usize
-    let len: usize = str::from_utf8(&len_buf[..])
+    let len: &str = str::from_utf8(&len_buf[..])
         .unwrap()
-        .trim()
+        .trim();
+    
+    let len: usize = remove_leading_zeroes(len)
         .parse()
         .unwrap();
 
-    // Read the specified amount of bytes from the stream
+    println!("Reading {} bytes", len);
+    
+        // Read the specified amount of bytes from the stream
     let mut msg_buf = vec![0u8; len];
     stream.read_exact(&mut msg_buf).expect("Unable to read message");
     
+    println!("Got all bytes");
+
     // Convert the received bytes into a string
     let msg = match str::from_utf8(&msg_buf[..]) {
         Ok(msg) => msg,
@@ -70,10 +90,10 @@ fn read_message(stream: &mut TcpStream) -> std::result::Result<Message, serde_js
     // Flush the stream
     stream.flush().expect("Unable to flush stream");
 
-    println!("{}", &len);
-
     // Parse the Json string into a Message object
     serde_json::from_str(&msg)
+
+   
 }
 
 impl Message {
@@ -88,7 +108,7 @@ impl Message {
     }
 
     fn send(&self, stream: &mut TcpStream) -> std::io::Result<()> {
-        // write to the message to TCP stream
+        // convert self into json
         // we exit the function if this fails
         let json = match serde_json::to_string(self) {
             Ok(s) => s,
@@ -96,18 +116,22 @@ impl Message {
                 return Err(Error::new(ErrorKind::Other, e))
         };
 
-        // Convert the serialized json into bytes
+        // Convert the json into bytes
         let serialized = json.as_bytes();
 
         // Write the length of the message first so the recipient knows how many bytes to listen for
         let len = serialized.len().to_string();
-        let len = len.as_bytes();
-        stream.write(len).expect("Unable to write message length");
+
+        // pad len to always be 4 bytes long
+        let len: String = format!("{:0>4}", len);
+
+ //       println!("{}", len);
+        
+        stream.write(len.as_bytes()).expect("Unable to write message length");
 
         stream.write_all(serialized)
     }
 }
-
 fn gen_token() -> String {
     return thread_rng()
         .sample_iter(&Alphanumeric)
@@ -156,6 +180,8 @@ fn process_login_request(data: &LoginData) -> MessageType {
         return MessageType::Result(OperationResult::Fail);
     }
 
+    println!("Processing login request for: {:?}", data);
+
     let server_hash = format!("{}{}{}", 
         data.client_token, 
         data.server_token, 
@@ -193,6 +219,8 @@ fn handle_client(mut stream: TcpStream) {
     loop {
         let msg: Message = read_message(&mut stream)
             .expect("Unable to read message");
+
+        println!("Message type: {:?}", msg.msg_type);
 
         match msg.msg_type {
             MessageType::SendToken => 
