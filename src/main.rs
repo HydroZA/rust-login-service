@@ -9,7 +9,7 @@ use chrono::offset::Utc;
 use sha256::digest;
 
 // Import the networking module
-use networking;
+use networking::*;
 
 struct LoginData {
     client_token: String,
@@ -79,9 +79,9 @@ fn main() {
     };
 
     // Verify Connection
-    match networking::Message::read_into_message(&mut con) {
+    match Message::read_into_message(&mut con) {
         Ok(m) => match m.msg_type {
-            networking::MessageType::Result(networking::OperationResult::Success) => {},
+            MessageType::Result(OperationResult::Success) => {},
             _ => panic!("Bad server response")
         },
         Err(_) => panic!("Bad server response")
@@ -96,8 +96,8 @@ fn main() {
     login_data.client_token = gen_token();
 
     // Send our token to the server
-    networking::Message {
-        msg_type: networking::MessageType::SendToken,
+    Message {
+        msg_type: MessageType::SendToken,
         header: hashmap! {
             String::from("timestamp") => get_timestamp()
         },
@@ -108,22 +108,22 @@ fn main() {
 
 
     // Request the servers token
-    networking::Message {
-        msg_type: networking::MessageType::RequestToken,
+    Message {
+        msg_type: MessageType::RequestToken,
         header: hashmap! {
             String::from("timestamp") => get_timestamp()
         },
         body: None
     }.send(&mut con);
 
-    login_data.server_token = match networking::Message::read_into_message(&mut con) {
+    login_data.server_token = match Message::read_into_message(&mut con) {
         Ok(t) => t.get_body_value("token"),
         Err(_) => panic!("Unable to read server token")
     };
 
     // tell the server the username we are attempting to login with
-    networking::Message {
-        msg_type: networking::MessageType::Username,
+    Message {
+        msg_type: MessageType::Username,
         header: hashmap! {
             String::from("timestamp") => get_timestamp()
         },
@@ -136,8 +136,8 @@ fn main() {
     let auth_hash = login_data.get_hash();
 
     // finally, create the login request
-    networking::Message {
-        msg_type: networking::MessageType::LoginRequest,
+    Message {
+        msg_type: MessageType::LoginRequest,
         header: hashmap! {
             String::from("timestamp") => get_timestamp()
         },
@@ -146,8 +146,8 @@ fn main() {
         })
     }.send(&mut con);
 
-    match networking::Message::read_into_message(&mut con).unwrap().msg_type {
-        networking::MessageType::Result(networking::OperationResult::Success) => println!("Login Successful!"),
+    match Message::read_into_message(&mut con).unwrap().msg_type {
+        MessageType::Result(OperationResult::Success) => println!("Login Successful!"),
         _ => println!("Login failed!")
     };
 }
