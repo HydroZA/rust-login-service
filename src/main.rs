@@ -14,7 +14,7 @@ use mysql::prelude::*;
 //use serde_json::json;
 
 // Import the Messaging module
-mod networking;
+use networking;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct LoginData {

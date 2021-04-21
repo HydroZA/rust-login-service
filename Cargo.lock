@@ -534,6 +534,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "networking"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "maplit",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nix"
 version = "0.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -907,6 +917,7 @@ dependencies = [
  "chrono",
  "maplit",
  "mysql",
+ "networking",
  "rand 0.8.3",
  "serde",
  "serde_json",
