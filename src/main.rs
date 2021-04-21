@@ -14,7 +14,7 @@ use mysql::prelude::*;
 //use serde_json::json;
 
 // Import the Messaging module
-use networking;
+use networking::*;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct LoginData {
@@ -66,11 +66,11 @@ fn get_server_secret(username: &str) -> String {
     The server checks if sha( T1 + T2 + < password: server's copy > ) matches M (the hash just received).
 */
 
-fn process_login_request(data: &LoginData) -> networking::MessageType {
+fn process_login_request(data: &LoginData) -> MessageType {
     if data.username.is_empty() ||
         data.client_token.is_empty() ||
         data.client_hash.is_empty() {
-        return networking::MessageType::Result(networking::OperationResult::Fail);
+        return MessageType::Result(OperationResult::Fail);
     }
 
     println!("Processing login request for: {:?}", data);
@@ -82,21 +82,21 @@ fn process_login_request(data: &LoginData) -> networking::MessageType {
     );
     let server_hash: String = digest(server_hash);
     if server_hash == data.client_hash {
-        return networking::MessageType::Result(networking::OperationResult::Success);
+        return MessageType::Result(OperationResult::Success);
     }
     else {
-        return networking::MessageType::Result(networking::OperationResult::Fail);
+        return MessageType::Result(OperationResult::Fail);
     }
 }
 
 #[allow(unreachable_code)]
 fn handle_client(mut stream: TcpStream) {
     // Let the client know they're connected
-    let msg_connected = networking::Message {
+    let msg_connected = Message {
         header: hashmap!{
             String::from("timestamp") => get_timestamp()
         },
-        msg_type: networking::MessageType::Result(networking::OperationResult::Success),
+        msg_type: MessageType::Result(OperationResult::Success),
         body: None
     };
 
@@ -111,32 +111,32 @@ fn handle_client(mut stream: TcpStream) {
 
 
     loop {
-        let msg: networking::Message = 
-            networking::Message::read_into_message(&mut stream)
+        let msg: Message = 
+            Message::read_into_message(&mut stream)
             .expect("Unable to read message");
 
         println!("Message type: {:?}", msg.msg_type);
 
         match msg.msg_type {
-            networking::MessageType::SendToken => 
+            MessageType::SendToken => 
                 login_data.client_token = msg.get_body_value("token"),
-            networking::MessageType::RequestToken => {
-                networking::Message {
+            MessageType::RequestToken => {
+                Message {
                     header: hashmap! {
                         String::from("timestamp") => get_timestamp()
                     },
-                    msg_type: networking::MessageType::SendToken,
+                    msg_type: MessageType::SendToken,
                     body: Some(hashmap! {
                         String::from("token") => login_data.server_token.clone()
                     })
                 }.send(&mut stream).expect("Unable to send token")
             },
-            networking::MessageType::Username => 
+            MessageType::Username => 
                 login_data.username = msg.get_body_value("username"),
-                networking::MessageType::LoginRequest => {
+                MessageType::LoginRequest => {
                 login_data.client_hash = msg.get_body_value("client_hash");
 
-                networking::Message {
+                Message {
                     header: hashmap! {
                         String::from("timestamp") => get_timestamp()
                     },
@@ -144,7 +144,7 @@ fn handle_client(mut stream: TcpStream) {
                     body: None
                 }.send(&mut stream).expect("Unable to send login result")
             },
-            networking::MessageType::Result(_r) => 
+            MessageType::Result(_r) => 
                 panic!("Not Yet Implemented")
         };
     }
