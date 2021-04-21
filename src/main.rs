@@ -1,12 +1,7 @@
 use std::io;
-use std::io::{Error, ErrorKind};
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use std::net::{TcpStream};
-use std::io::{Read, Write};
-use std::str;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::time::SystemTime;
 use maplit::hashmap;
 use chrono::DateTime;
@@ -14,7 +9,7 @@ use chrono::offset::Utc;
 use sha256::digest;
 
 // Import the networking module
-mod networking;
+use networking;
 
 struct LoginData {
     client_token: String,

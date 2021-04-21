@@ -7,9 +7,11 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+networking = { path = "../networking"}
 rand = "0.8.3"
 sha256 = "1.0.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 maplit = "1.0.2"
 chrono = "0.4.0"
+
